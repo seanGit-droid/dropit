@@ -1,0 +1,9 @@
+.git
+.gitignore
+*.docx
+_docs_tmp
+_gen_*.py
+*.ps1
+database/*.sql
+resources/pod
+resources/transit
