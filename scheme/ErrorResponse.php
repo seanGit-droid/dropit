@@ -8,7 +8,19 @@ final class ErrorResponse
         $databaseFailure = $exception instanceof PDOException;
         $status = $databaseFailure ? 503 : 500;
         // No SQL, credentials, request values, or stack traces in production responses/logs.
-        error_log('DropIT request failed: '.get_class($exception).' code='.(string)$exception->getCode());
+        $reason='request';
+        if ($databaseFailure) {
+            $detail=strtolower($exception->getMessage());
+            $reason=match (true) {
+                str_contains($detail,'getaddrinfo'),str_contains($detail,'php_network_getaddresses') => 'database_dns',
+                str_contains($detail,'refused') => 'database_connection_refused',
+                str_contains($detail,'timed out') => 'database_timeout',
+                str_contains($detail,'access denied') => 'database_authentication',
+                str_contains($detail,'ssl'),str_contains($detail,'certificate') => 'database_tls',
+                default => 'database_query',
+            };
+        }
+        error_log('DropIT request failed: '.get_class($exception).' code='.(string)$exception->getCode().' reason='.$reason);
         http_response_code($status);
         header('Cache-Control: no-store');
         if ($status === 503) header('Retry-After: 30');
