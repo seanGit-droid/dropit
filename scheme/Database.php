@@ -194,7 +194,15 @@ class Database {
             PDO::ATTR_EMULATE_PREPARES   => false,
         );
 
-        if ($driver === 'mysql') $options[PDO::ATTR_TIMEOUT] = 5;
+        if ($driver === 'mysql') {
+            $options[PDO::ATTR_TIMEOUT] = 5;
+            $ca = getenv('DB_SSL_CA') ?: '';
+            if ($ca !== '') {
+                if (!is_readable($ca)) throw new PDOException('Database CA certificate is not readable.');
+                $options[PHP_VERSION_ID >= 80400 ? Pdo\Mysql::ATTR_SSL_CA : PDO::MYSQL_ATTR_SSL_CA] = $ca;
+                $options[PHP_VERSION_ID >= 80400 ? Pdo\Mysql::ATTR_SSL_VERIFY_SERVER_CERT : PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT] = true;
+            }
+        }
         try {
             $this->db = new PDO($dsn, $username, $password, $options);
              $this->driver = $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
