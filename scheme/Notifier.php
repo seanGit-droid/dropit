@@ -40,6 +40,17 @@ class Notifier
     {
         if ($to === '') return 'no_recipient';
 
+        $apiKey=trim((string)getenv('BREVO_API_KEY'));
+        if ($apiKey !== '') {
+            require_once APP_ROOT.'/scheme/BrevoEmail.php';
+            $from=trim((string)getenv('BREVO_FROM_EMAIL'));
+            $html=str_replace('cid:dropit-logo',url('resources/weblogo.png'),self::render_email_html($subject,$body));
+            [$ok,$note]=BrevoEmail::send($apiKey,$from,$to,$subject,$body,$html);
+            self::log('email',$to,$subject,$body,$ok?'sent':'failed',$note);
+            return $ok?'sent':'failed';
+        }
+
+
         $host = trim((string) setting('smtp_host', ''));
         $port = (int)   setting('smtp_port', 587);
         $user = trim((string) setting('smtp_user', ''));
