@@ -33,6 +33,23 @@ $fare = compute_fare_php(
     'Tricycle'
 );
 
+// GCash checkout uses the same simulated account balance, with one atomic deduction.
+if ($pay_method === 'gcash') {
+    require_once APP_ROOT.'/scheme/GCashSimulation.php';
+    try {
+        if (!(new Router())->is_csrf_valid()) throw new InvalidArgumentException('Your checkout form expired. Please retry.');
+        $booking=GCashSimulation::book(db(),(int)$uid,$data,$fare);
+    } catch (Throwable $e) {
+        if (!($e instanceof InvalidArgumentException)) error_log('GCash simulation checkout failed: '.get_class($e));
+        set_flash('error',$e instanceof InvalidArgumentException?$e->getMessage():'GCash simulated checkout could not be saved. Your balance was not deducted. Please retry.');
+        header('Location: '.url('customer/order')); exit;
+    }
+    try { Notifier::notify_admin_new_order($booking['parcel'],$booking['customer']); }
+    catch (Throwable $e) { error_log('GCash booking notification failed: '.get_class($e)); }
+    set_flash('success','Order placed. Tracking '.$booking['tracking'].' · PAID (Via GCash Simulation).');
+    header('Location: '.url('customer/track?q='.urlencode($booking['tracking']))); exit;
+}
+
 $me = db()->table('users')->select('id, full_name, phone, email, wallet_balance')->where('id',$uid)->get();
 
 // Only wallet method needs upfront balance.
@@ -46,7 +63,7 @@ $token = bin2hex(random_bytes(16));
 
 $payment_status = match ($pay_method) {
     'wallet' => 'held',
-    'gcash'  => 'unpaid', // becomes 'held' once PayMongo confirms
+    'gcash'  => 'held', // handled atomically by the local simulation above
     'cod'    => 'unpaid', // settles when driver collects
 };
 
@@ -101,11 +118,6 @@ $parcel = db()->table('parcels')
     ->select('id, tracking_number, pickup_address, recipient_address, recipient_name, recipient_phone, notes, amount')
     ->where('id', $pid)->get();
 Notifier::notify_admin_new_order($parcel, $me);
-
-if ($pay_method === 'gcash') {
-    // Immediately redirect to pay via PayMongo.
-    header('Location: ' . url('pay/gcash/create/' . $pid)); exit;
-}
 
 set_flash('success', "Order placed. Tracking {$tracking} · " . ($pay_method === 'cod' ? 'Pay on delivery.' : '₱' . number_format($fare['amount'],2) . ' held from wallet.'));
 header('Location: ' . url('customer/track?q=' . urlencode($tracking)));

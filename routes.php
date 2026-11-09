@@ -124,6 +124,7 @@ $router->group([
 });
 
 // ============ Payment ============
+$router->get('/pay/gcash/create/{id}', 'app/views/actions/pay_gcash_review', ['customer']);
 $router->post('/pay/gcash/create/{id}', 'app/views/actions/pay_gcash_create', ['customer']);
 $router->get('/pay/gcash/return/{id}',  'app/views/actions/pay_gcash_return', ['customer']);
 

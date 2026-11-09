@@ -145,7 +145,10 @@ include __DIR__ . '/../partials/live.php';
       </div>
 
       <?php if ($can_pay_gcash): ?>
-        <a href="<?= url('pay/gcash/create/'.$parcel['id']) ?>" class="btn btn-primary w-full mt-3">💳 Pay ₱<?= number_format((float)$parcel['amount'],2) ?> via GCash</a>
+        <form method="post" action="<?= url('pay/gcash/create/'.$parcel['id']) ?>">
+          <?php (new Router())->csrf_field(); ?>
+          <button type="submit" class="btn btn-primary w-full mt-3">💳 Pay ₱<?= number_format((float)$parcel['amount'],2) ?> via GCash</button>
+        </form>
       <?php endif; ?>
 
       <?php if (in_array($parcel['status'], ['Delivered','Return Pending'])): ?>
