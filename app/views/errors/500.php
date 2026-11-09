@@ -1,9 +1,10 @@
+<?php $responseStatus = http_response_code() === 503 ? 503 : 500; $responseTitle = $responseStatus === 503 ? "Service temporarily unavailable" : "Internal Server Error"; ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>500 | Not Found</title>
+<title><?= $responseStatus ?> | <?= $responseTitle ?></title>
 
 <style>
 :root {
@@ -105,8 +106,8 @@ p {
 
 <body>
 <main class="card" role="main">
-  <div class="code">500 - Internal Server Error</div>
-  <h1>Internal Server Error</h1>
+  <div class="code"><?= $responseStatus ?> - <?= $responseTitle ?></div>
+  <h1><?= $responseTitle ?></h1>
   <p><?= $error ?></p>
 
   <div class="actions">

@@ -349,14 +349,9 @@ class Router
                     $this->regenerate_csrf();
                 }
 
-            } catch (Exception $e) {
-                if (defined('IS_DEV') && IS_DEV) {
-                    http_response_code(500);
-                    $error = "Server error: " . htmlspecialchars($e->getMessage());
-                    include dirname(__DIR__) . '/app/views/errors/500.php';
-                    exit;
-                }
-                exit;
+            } catch (Throwable $e) {
+                require_once APP_ROOT . '/scheme/ErrorResponse.php';
+                ErrorResponse::send($e);
             }
 
             return;

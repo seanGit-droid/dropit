@@ -18,6 +18,9 @@ header_remove('X-Powered-By');
 //App configurations
 require_once 'config.php';
 
+require_once APP_ROOT . '/scheme/ErrorResponse.php';
+set_exception_handler([ErrorResponse::class, 'send']);
+
 //Error reporting
 if (IS_DEV) {
     ini_set('display_errors', 1);

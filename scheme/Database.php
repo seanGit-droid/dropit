@@ -194,11 +194,12 @@ class Database {
             PDO::ATTR_EMULATE_PREPARES   => false,
         );
 
+        if ($driver === 'mysql') $options[PDO::ATTR_TIMEOUT] = 5;
         try {
             $this->db = new PDO($dsn, $username, $password, $options);
              $this->driver = $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
         } catch (Exception $e) {
-            throw new PDOException($e->getMessage());
+            throw $e;
         }
     }
 
@@ -286,6 +287,8 @@ class Database {
                 return $stmt->rowCount();
             }
         } catch (Exception $e) {
+            // Production errors must reach the router's HTML/JSON response handler.
+            if (!IS_DEV) throw $e;
             http_response_code(500);
             $error = $e->getMessage() . "<br>Query:  $this->getSQL";
             include dirname(__DIR__) . '/app/views/errors/500.php';
@@ -1278,6 +1281,8 @@ class Database {
             $this->rowCount = $stmt->rowCount();
             return $stmt->fetch($mode);
         } catch (Exception $e) {
+            // Production errors must reach the router's HTML/JSON response handler.
+            if (!IS_DEV) throw $e;
             http_response_code(500);
             $error = $e->getMessage() . "<br>Query:  $this->getSQL";
             include dirname(__DIR__) . '/app/views/errors/500.php';
@@ -1300,6 +1305,8 @@ class Database {
             $this->rowCount = $stmt->rowCount();
             return $stmt->fetchAll($mode);
         } catch (Exception $e) {
+            // Production errors must reach the router's HTML/JSON response handler.
+            if (!IS_DEV) throw $e;
             http_response_code(500);
             $error = $e->getMessage() . "<br>Query:  $this->getSQL";
             include dirname(__DIR__) . '/app/views/errors/500.php';
