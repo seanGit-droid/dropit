@@ -16,6 +16,17 @@ if (!$parcel || $parcel['driver_id'] != $_SESSION['user_id']) {
     header('Location: ' . url('driver/dashboard')); exit;
 }
 
+// Finalized deliveries cannot be reopened or settled again through this endpoint.
+if (in_array($parcel['status'], ['Delivered', 'Cancelled', 'Return Pending', 'Returned'], true)) {
+    set_flash('error', 'This parcel is already finalized.');
+    header('Location: ' . url('driver/parcel/'.$pid)); exit;
+}
+
+// Completion must use the existing atomic photo/GPS proof submission.
+if ($status === 'Delivered') {
+    header('Location: ' . url('driver/pod/'.$pid)); exit;
+}
+
 // "Picked Up" requires a proof-of-pickup photo — no silent transition.
 $pickup_photo_rel = null;
 if ($status === 'Picked Up') {

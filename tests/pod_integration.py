@@ -115,6 +115,9 @@ try:
         check(sql('SELECT status,pod_photo FROM parcels WHERE id=3')[0]=={'status':'Arrived','pod_photo':None},'settlement failure rolls back delivery and proof')
         check(set((ROOT/'resources/pod').glob('*'))==before_money,'settlement failure removes its photo')
         sql('DROP TRIGGER pod_payment_failure')
+        code,_,target=driver.request('/driver/update/1',urllib.parse.urlencode({'csrf_token':driver.token(),'status':'Delivered'}).encode(),{'Content-Type':'application/x-www-form-urlencoded'})
+        check(code==200 and '/driver/pod/1' in target,'Delivered dropdown opens mandatory proof capture')
+        check(sql('SELECT status,pod_photo FROM parcels WHERE id=1')[0]=={'status':'Arrived','pod_photo':None},'status shortcut cannot bypass photo/GPS or settle payment')
         code,body,_=driver.pod()
         check(code==200 and json.loads(body)['ok'],'valid multipart photo and GPS completes delivery')
         proof=sql('SELECT * FROM parcels WHERE id=1')[0]; photos.append(ROOT/proof['pod_photo'])
@@ -129,6 +132,8 @@ try:
         code,_,_=driver.pod()
         driver.token=original_token
         check(code==422 and float(sql('SELECT wallet_balance FROM users WHERE id=2')[0]['wallet_balance'])==90,'duplicate delivery rejected without double payment')
+        driver.request('/driver/update/1',urllib.parse.urlencode({'csrf_token':driver.token(),'status':'In Transit'}).encode(),{'Content-Type':'application/x-www-form-urlencoded'})
+        check(sql('SELECT status FROM parcels WHERE id=1')[0]['status']=='Delivered','finalized delivery cannot be reopened via status dropdown')
         code,body,_=driver.pod(2)
         check(code==200 and json.loads(body)['ok'],'COD proof saves successfully')
         photos.append(ROOT/sql('SELECT pod_photo FROM parcels WHERE id=2')[0]['pod_photo'])
@@ -148,6 +153,38 @@ try:
         admin=Client(base); admin.login('test1@example.invalid',True)
         code,html,_=admin.request('/admin/dashboard')
         check(code==200 and 'Hi Admin!' in html,'existing admin dashboard still works')
+        # Complete a fresh booking through the real role-specific HTTP routes.
+        def form(client,path,fields):
+            return client.request(path,urllib.parse.urlencode(fields).encode(),{'Content-Type':'application/x-www-form-urlencoded'})
+        def csrf(client,path):
+            return re.search(r'name="csrf_token" value="([^"]+)"',client.request(path)[1]).group(1)
+        sql('UPDATE users SET wallet_balance=1000 WHERE id=3')
+        booking={'csrf_token':csrf(customer,'/customer/order'),'payment_method':'gcash','sender_name':'QA Sender','pickup_address':'QA pickup','pickup_lat':'14.5995','pickup_lng':'120.9842','recipient_name':'QA Receiver','recipient_phone':'09123456789','recipient_address':'QA dropoff','dropoff_lat':'14.6','dropoff_lng':'120.99','product_name':'QA parcel','weight':'1'}
+        code,html,target=form(customer,'/customer/order',booking)
+        fresh=sql('SELECT * FROM parcels ORDER BY id DESC LIMIT 1')[0]; fresh_id=fresh['id']
+        check(code==200 and '/customer/track?q=' in target and fresh['status']=='Pending' and fresh['payment_status']=='held','fresh customer simulated GCash booking reaches tracking')
+        check(round(float(sql('SELECT wallet_balance FROM users WHERE id=3')[0]['wallet_balance']),2)==round(1000-float(fresh['amount']),2),'fresh booking debits calculated fare exactly once')
+        form(admin,'/admin/shipments/assign/'+str(fresh_id),{'csrf_token':csrf(admin,'/admin/shipments/assign'),'driver_id':'2'})
+        check(sql('SELECT status,driver_id FROM parcels WHERE id=?',[fresh_id])[0]=={'status':'Dispatched','driver_id':2},'admin dispatch reaches assigned driver')
+        form(driver,'/driver/accept/'+str(fresh_id),{'csrf_token':driver.token(),'decision':'accept'})
+        check(sql('SELECT status FROM parcels WHERE id=?',[fresh_id])[0]['status']=='Accepted','driver accepts fresh booking')
+        boundary='QA'+uuid.uuid4().hex
+        upload=(f'--{boundary}\r\nContent-Disposition: form-data; name="csrf_token"\r\n\r\n{driver.token()}\r\n--{boundary}\r\nContent-Disposition: form-data; name="status"\r\n\r\nPicked Up\r\n--{boundary}\r\nContent-Disposition: form-data; name="pickup_photo"; filename="qa.png"\r\nContent-Type: image/png\r\n\r\n'.encode()+PNG+f'\r\n--{boundary}--\r\n'.encode())
+        code,html,_=driver.request('/driver/update/'+str(fresh_id),upload,{'Content-Type':'multipart/form-data; boundary='+boundary})
+        check(code==200 and sql('SELECT status FROM parcels WHERE id=?',[fresh_id])[0]['status']=='Picked Up','pickup photo and status submit together without repeated-photo error')
+        for stage in ['In Transit','Arrived']:
+            form(driver,'/driver/update/'+str(fresh_id),{'csrf_token':driver.token(),'status':stage})
+            check(sql('SELECT status FROM parcels WHERE id=?',[fresh_id])[0]['status']==stage,'fresh delivery advances to '+stage)
+        code,body,_=driver.pod(fresh_id)
+        check(code==200 and json.loads(body)['ok'],'fresh delivery saves proof and settles successfully')
+        final=sql('SELECT * FROM parcels WHERE id=?',[fresh_id])[0]; photos.append(ROOT/final['pod_photo'])
+        check(final['status']=='Delivered' and final['payment_status']=='settled','full role workflow ends delivered and settled')
+        check(sql("SELECT COUNT(*) n FROM wallet_transactions WHERE parcel_id=? AND type='delivery_earning'",[fresh_id])[0]['n']==1,'full role workflow releases driver earnings once')
+        code,html,_=customer.request('/customer/receipt/'+final['tracking_number'])
+        check(code==200 and final['pod_photo'] in html and 'Print / Save PDF' in html,'customer can print the fresh proof receipt')
+        for row in sql('SELECT notes FROM parcel_history WHERE parcel_id=?',[fresh_id]):
+            if row['notes'].startswith('[IMG]'):
+                photos.append(ROOT/row['notes'][5:].split('|',1)[0])
         print('ALL POD INTEGRATION CHECKS PASSED',flush=True)
         if '--preview' in sys.argv:
             print('ISOLATED PREVIEW: '+base+' | admin: test1@example.invalid | driver: test2@example.invalid | customer: test3@example.invalid | password: POD-test-only-123!',flush=True)
