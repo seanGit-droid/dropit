@@ -126,7 +126,7 @@ try:
         check(code==200 and '/driver/pod/1' in target,'Delivered dropdown opens mandatory proof capture')
         check(sql('SELECT status,pod_photo FROM parcels WHERE id=1')[0]=={'status':'Arrived','pod_photo':None},'status shortcut cannot bypass photo/GPS or settle payment')
         code,body,_=driver.pod()
-        check(code==200 and json.loads(body)['ok'],'valid multipart photo and GPS completes delivery')
+        check(code==200 and json.loads(body)['ok'] and json.loads(body)['redirect'].endswith('/driver/dashboard'),'valid multipart photo and GPS completes delivery to driver dashboard')
         proof=sql('SELECT * FROM parcels WHERE id=1')[0]; photos.append(ROOT/proof['pod_photo'])
         check(proof['status']=='Delivered' and proof['payment_status']=='settled','delivery and wallet settle together')
         check(proof['pod_latitude']=='14.5995123' and proof['pod_longitude']=='120.9842345' and proof['pod_captured_at'] and proof['pod_location_at'] and proof['pod_saved_at'],'exact coordinates and all timestamps persisted')

@@ -111,6 +111,8 @@ if ($p['customer_id']) {
 } catch (Throwable $e) { error_log('Delivery notification: '.$e->getMessage()); }
 
 set_flash('success', 'Marked Delivered.');
-if ($json) json_response(['ok'=>true,'redirect'=>url('driver/pod/'.$pid)]);
-header('Location: ' . url('driver/pod/'.$pid));
+// A successful proof submission ends the driver task; return to the task list.
+// The proof remains available from customer tracking, receipts, and admin views.
+if ($json) json_response(['ok'=>true,'redirect'=>url('driver/dashboard')]);
+header('Location: ' . url('driver/dashboard'));
 exit;
