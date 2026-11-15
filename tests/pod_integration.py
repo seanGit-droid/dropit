@@ -3,10 +3,11 @@
 Uses the configured database's schema only; never copies or edits its data.
 Run from the project root: python3 tests/pod_integration.py
 """
-import base64, sys, http.cookiejar, json, os, re, socket, subprocess, tempfile, time, urllib.error, urllib.parse, urllib.request, uuid
+import base64, hashlib, sys, http.cookiejar, json, os, re, socket, subprocess, tempfile, time, urllib.error, urllib.parse, urllib.request, uuid
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ENV = os.environ.copy()
+REMOTE = ENV.get('PROOF_STORAGE') == 'cloudinary'
 BRIDGE = r'''
 require 'config.php';
 $i=json_decode(stream_get_contents(STDIN),true);
@@ -24,11 +25,17 @@ def check(condition, message):
 class Client:
     def __init__(self, base):
         self.base=base; self.opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-    def request(self,path,data=None,headers=None):
+    def request(self,path,data=None,headers=None,raw=False):
         req=urllib.request.Request(self.base+path,data=data,headers=headers or {})
         try:
-            with self.opener.open(req,timeout=15) as r: return r.status,r.read().decode(),r.url
-        except urllib.error.HTTPError as e: return e.code,e.read().decode(),e.url
+            with self.opener.open(req,timeout=15) as r: return r.status,(r.read() if raw else r.read().decode()),r.url
+        except urllib.error.HTTPError as e: return e.code,(e.read() if raw else e.read().decode()),e.url
+    def photo(self,path,field='photo',fields=None):
+        boundary='PHOTO'+uuid.uuid4().hex
+        fields={'csrf_token':self.token(),**(fields or {})}
+        parts=[f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k,v in fields.items()]
+        parts += [f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="qa.png"\r\nContent-Type: image/png\r\n\r\n'.encode()+PNG+b'\r\n',f'--{boundary}--\r\n'.encode()]
+        return self.request(path,b''.join(parts),{'Content-Type':'multipart/form-data; boundary='+boundary})
     def login(self,email,admin=False):
         data=urllib.parse.urlencode({'email':email,'password':'POD-test-only-123!', 'admin_mode':'1' if admin else ''}).encode()
         code,body,_=self.request('/login',data,{'Content-Type':'application/x-www-form-urlencoded'})
@@ -47,7 +54,7 @@ class Client:
             parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="capture.jpg"\r\nContent-Type: image/jpeg\r\n\r\n'.encode()+(PNG if image is None else image)+b'\r\n')
         parts.append(f'--{boundary}--\r\n'.encode())
         return self.request('/driver/pod/'+str(pid),b''.join(parts),{'Content-Type':'multipart/form-data; boundary='+boundary,'Accept':'application/json'})
-PNG=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jA1sAAAAASUVORK5CYII=')
+PNG=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC')
 SIGNATURE='data:image/png;base64,'+base64.b64encode(PNG).decode()
 schema='dropit_pod_test_'+uuid.uuid4().hex[:10]
 source=subprocess.check_output(['php','-r','require "config.php"; echo DB_NAME;'],cwd=ROOT,env=ENV,text=True)
@@ -123,7 +130,11 @@ try:
         proof=sql('SELECT * FROM parcels WHERE id=1')[0]; photos.append(ROOT/proof['pod_photo'])
         check(proof['status']=='Delivered' and proof['payment_status']=='settled','delivery and wallet settle together')
         check(proof['pod_latitude']=='14.5995123' and proof['pod_longitude']=='120.9842345' and proof['pod_captured_at'] and proof['pod_location_at'] and proof['pod_saved_at'],'exact coordinates and all timestamps persisted')
-        check(photos[-1].is_file(),'saved photo exists')
+        if REMOTE:
+            code,image,_=driver.request('/'+proof['pod_photo'],raw=True)
+            check(code==200 and image==PNG and not photos[-1].is_file(),'remote proof is retrievable byte-for-byte without any local copy')
+        else:
+            check(photos[-1].is_file(),'saved photo exists')
         check(float(sql('SELECT wallet_balance FROM users WHERE id=2')[0]['wallet_balance'])==90,'driver credited once')
         check(float(sql('SELECT wallet_balance FROM users WHERE id=1')[0]['wallet_balance'])==10,'admin credited once')
         # Completed parcel form redirects, so obtain a token from a still-arrived fixture.
@@ -168,10 +179,20 @@ try:
         check(sql('SELECT status,driver_id FROM parcels WHERE id=?',[fresh_id])[0]=={'status':'Dispatched','driver_id':2},'admin dispatch reaches assigned driver')
         form(driver,'/driver/accept/'+str(fresh_id),{'csrf_token':driver.token(),'decision':'accept'})
         check(sql('SELECT status FROM parcels WHERE id=?',[fresh_id])[0]['status']=='Accepted','driver accepts fresh booking')
-        boundary='QA'+uuid.uuid4().hex
-        upload=(f'--{boundary}\r\nContent-Disposition: form-data; name="csrf_token"\r\n\r\n{driver.token()}\r\n--{boundary}\r\nContent-Disposition: form-data; name="status"\r\n\r\nPicked Up\r\n--{boundary}\r\nContent-Disposition: form-data; name="pickup_photo"; filename="qa.png"\r\nContent-Type: image/png\r\n\r\n'.encode()+PNG+f'\r\n--{boundary}--\r\n'.encode())
-        code,html,_=driver.request('/driver/update/'+str(fresh_id),upload,{'Content-Type':'multipart/form-data; boundary='+boundary})
+        before_pickup=set((ROOT/'resources/transit').glob('*'))
+        sql("CREATE TRIGGER pickup_history_failure BEFORE INSERT ON parcel_history FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='pickup rollback test'")
+        driver.photo('/driver/update/'+str(fresh_id),'pickup_photo',{'status':'Picked Up'})
+        check(sql('SELECT status FROM parcels WHERE id=?',[fresh_id])[0]['status']=='Accepted' and set((ROOT/'resources/transit').glob('*'))==before_pickup,'pickup database failure rolls back status and removes its photo')
+        sql('DROP TRIGGER pickup_history_failure')
+        code,html,_=driver.photo('/driver/update/'+str(fresh_id),'pickup_photo',{'status':'Picked Up'})
         check(code==200 and sql('SELECT status FROM parcels WHERE id=?',[fresh_id])[0]['status']=='Picked Up','pickup photo and status submit together without repeated-photo error')
+        before_transit=set((ROOT/'resources/transit').glob('*'))
+        sql("CREATE TRIGGER transit_history_failure BEFORE INSERT ON parcel_history FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='transit rollback test'")
+        driver.photo('/driver/transit-photo/'+str(fresh_id),fields={'caption':'QA transit'})
+        check(set((ROOT/'resources/transit').glob('*'))==before_transit,'transit database failure removes its unreferenced photo')
+        sql('DROP TRIGGER transit_history_failure')
+        code,html,_=driver.photo('/driver/transit-photo/'+str(fresh_id),fields={'caption':'QA transit photo 📷'})
+        check(code==200 and 'Photo posted' in html and any('QA transit photo 📷' in r['notes'] for r in sql('SELECT notes FROM parcel_history WHERE parcel_id=?',[fresh_id])),'transit photo uploads with Unicode caption and preserves delivery status')
         for stage in ['In Transit','Arrived']:
             form(driver,'/driver/update/'+str(fresh_id),{'csrf_token':driver.token(),'status':stage})
             check(sql('SELECT status FROM parcels WHERE id=?',[fresh_id])[0]['status']==stage,'fresh delivery advances to '+stage)
@@ -184,7 +205,23 @@ try:
         check(code==200 and final['pod_photo'] in html and 'Print / Save PDF' in html,'customer can print the fresh proof receipt')
         for row in sql('SELECT notes FROM parcel_history WHERE parcel_id=?',[fresh_id]):
             if row['notes'].startswith('[IMG]'):
-                photos.append(ROOT/row['notes'][5:].split('|',1)[0])
+                photo_path=row['notes'][5:].split('|',1)[0]
+                photos.append(ROOT/photo_path)
+                if REMOTE:
+                    code,image,_=customer.request('/'+photo_path,raw=True)
+                    check(code==200 and image==PNG,'customer can retrieve private pickup/transit proof from permanent storage')
+        # Exercise the remote-image access gate without exposing an actual proof.
+        missing='resources/pod/pod_8_abcdef0123456789.png'
+        sql('UPDATE parcels SET pod_photo=? WHERE id=8',[missing])
+        code,_,_=customer.request('/'+missing)
+        check(code==(404 if REMOTE else 503),'missing referenced image returns a controlled unavailable response')
+        other=Client(base); other.login('test5@example.invalid')
+        code,_,_=other.request('/'+missing)
+        check(code==403,'another customer cannot retrieve private delivery photos')
+        code,_,target=anonymous.request('/'+missing)
+        check('/login' in target,'anonymous remote photo request requires login')
+        code,_,_=customer.request('/resources/pod/pod_999_abcdef0123456789.png')
+        check(code==404,'unreferenced photo path never calls the storage provider')
         print('ALL POD INTEGRATION CHECKS PASSED',flush=True)
         if '--preview' in sys.argv:
             print('ISOLATED PREVIEW: '+base+' | admin: test1@example.invalid | driver: test2@example.invalid | customer: test3@example.invalid | password: POD-test-only-123!',flush=True)
@@ -194,9 +231,27 @@ finally:
         process.terminate(); process.wait(timeout=10)
     try:
         photos += [ROOT/r['pod_photo'] for r in sql('SELECT pod_photo FROM parcels WHERE pod_photo IS NOT NULL')]
+        photos += [ROOT/r['notes'][5:].split('|',1)[0] for r in sql("SELECT notes FROM parcel_history WHERE LEFT(notes,5)='[IMG]'")]
 
     except Exception: pass
+    cleanup_errors=[]
+    if REMOTE:
+        # Explicitly disposable synthetic fixtures only; never target live photos.
+        for photo in set(photos):
+            relative=str(photo.relative_to(ROOT))
+            if not re.fullmatch(r'resources/(pod|transit)/(pod|pickup|transit)_[1-9][0-9]*_[0-9a-f]{24}\.(png|jpg|jpeg|webp)',relative): continue
+            fields={'public_id':'dropit/proofs/'+relative[len('resources/'):].rsplit('.',1)[0],'type':'authenticated','timestamp':str(int(time.time()))}
+            signature=hashlib.sha1(('&'.join(k+'='+fields[k] for k in sorted(fields))+ENV['CLOUDINARY_API_SECRET']).encode()).hexdigest()
+            body=urllib.parse.urlencode({**fields,'api_key':ENV['CLOUDINARY_API_KEY'],'signature':signature}).encode()
+            endpoint='https://api.cloudinary.com/v1_1/'+ENV['CLOUDINARY_CLOUD_NAME']+'/image/destroy'
+            try:
+                with urllib.request.urlopen(urllib.request.Request(endpoint,data=body),timeout=20) as response:
+                    if json.loads(response.read()).get('result') not in ('ok','not found'): cleanup_errors.append(relative)
+            except Exception: cleanup_errors.append(relative)
     for photo in set(photos):
         if photo.parent in [ROOT/'resources/pod',ROOT/'resources/transit'] and photo.is_file(): photo.unlink()
     # Only the uniquely named disposable schema created above is removed.
     if re.fullmatch(r'dropit_pod_test_[0-9a-f]{10}',schema): sql(f'DROP DATABASE IF EXISTS `{schema}`',no_schema=True)
+
+    if cleanup_errors: raise RuntimeError('Disposable remote photo cleanup failed for '+str(len(cleanup_errors))+' test files.')
+    if REMOTE: print('PASS: disposable remote test photos cleaned up',flush=True)

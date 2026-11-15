@@ -17,35 +17,40 @@ if (!in_array($p['status'], $allowed_statuses)) {
     header('Location: ' . url('driver/parcel/'.$pid)); exit;
 }
 
-$dir = APP_ROOT . '/resources/transit';
-if (!is_dir($dir)) @mkdir($dir, 0775, true);
-
-$photo_rel = null;
-if (!empty($_FILES['photo']['tmp_name']) && is_uploaded_file($_FILES['photo']['tmp_name'])) {
-    $ext = strtolower(pathinfo($_FILES['photo']['name'], PATHINFO_EXTENSION) ?: 'jpg');
-    if (!in_array($ext, ['jpg','jpeg','png','webp','heic'])) $ext = 'jpg';
-    $fname = 'transit_' . $pid . '_' . time() . '_' . bin2hex(random_bytes(3)) . '.' . $ext;
-    if (move_uploaded_file($_FILES['photo']['tmp_name'], $dir . '/' . $fname)) {
-        $photo_rel = 'resources/transit/' . $fname;
+require_once APP_ROOT . '/scheme/ProofStorage.php';
+require_once APP_ROOT . '/scheme/DeliveryCapture.php';
+$photo_storage = null; $photo_rel = null; $photo_db = db();
+$caption = trim($_POST['caption'] ?? '');
+// The production PHP image does not require the optional mbstring extension.
+preg_match('/\A.{0,160}/us', $caption, $caption_match);
+$caption = $caption_match[0] ?? '';
+$photo_db->transaction();
+try {
+    $locked = $photo_db->raw('SELECT status,driver_id FROM parcels WHERE id=? FOR UPDATE', [$pid])->fetch();
+    if (!$locked || (int)$locked['driver_id'] !== $uid || !in_array($locked['status'], $allowed_statuses, true)) {
+        throw new InvalidArgumentException('This parcel is not in transit.');
     }
-}
-if (!$photo_rel) {
-    set_flash('error','Photo upload failed. Try a smaller image.');
+    $ext = strtolower(pathinfo($_FILES['photo']['name'] ?? '', PATHINFO_EXTENSION) ?: 'jpg');
+    if (!in_array($ext, ['jpg','jpeg','png','webp','heic'])) $ext = 'jpg';
+    $path = 'resources/transit/transit_' . $pid . '_' . bin2hex(random_bytes(12)) . '.' . $ext;
+    $photo_storage = new ProofStorage();
+    $photo_rel = $photo_storage->saveUpload($_FILES['photo'] ?? [], $path);
+    // Retain the existing [IMG]<path>|<caption> history format.
+    DeliveryCapture::insert($photo_db, 'parcel_history', [
+        'parcel_id'=>$pid, 'status'=>$locked['status'],
+        'notes'=>"[IMG]{$photo_rel}" . ($caption !== '' ? "|{$caption}" : ''), 'updated_by'=>$uid,
+    ]);
+    $photo_db->commit();
+} catch (Throwable $e) {
+    $photo_db->roll_back();
+    if ($photo_rel && $photo_storage) {
+        try { $photo_storage->discard($photo_rel); }
+        catch (Throwable $cleanup) { error_log('Transit rollback cleanup failed: '.get_class($cleanup)); }
+    }
+    if (!($e instanceof InvalidArgumentException)) error_log('Transit photo save failed: '.get_class($e));
+    set_flash('error', $e instanceof InvalidArgumentException ? $e->getMessage() : 'Photo could not be saved. Please retry.');
     header('Location: ' . url('driver/parcel/'.$pid)); exit;
 }
-
-$caption = trim($_POST['caption'] ?? '');
-$caption = mb_substr($caption, 0, 160);
-
-// Encode as "[IMG]<path>|<caption>" so the customer + admin timeline can pick it up.
-$note = "[IMG]{$photo_rel}" . ($caption !== '' ? "|{$caption}" : '');
-
-db()->table('parcel_history')->insert([
-    'parcel_id'  => $pid,
-    'status'     => $p['status'], // keep the current status — this is just an image update
-    'notes'      => $note,
-    'updated_by' => $uid,
-]);
 
 // Notify the customer in-app so they know to refresh.
 if ($p['customer_id']) {

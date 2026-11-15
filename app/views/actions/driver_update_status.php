@@ -27,48 +27,46 @@ if ($status === 'Delivered') {
     header('Location: ' . url('driver/pod/'.$pid)); exit;
 }
 
-// "Picked Up" requires a proof-of-pickup photo — no silent transition.
+// Pickup proof and status are saved together; notification behavior stays below.
 $pickup_photo_rel = null;
 if ($status === 'Picked Up') {
-    if (empty($_FILES['pickup_photo']['tmp_name']) || !is_uploaded_file($_FILES['pickup_photo']['tmp_name'])) {
-        set_flash('error','Photo is required when marking Picked Up.');
+    require_once APP_ROOT . '/scheme/ProofStorage.php';
+    require_once APP_ROOT . '/scheme/DeliveryCapture.php';
+    $pickup_db = db(); $photo_storage = null;
+    $pickup_db->transaction();
+    try {
+        $locked = $pickup_db->raw('SELECT driver_id,status FROM parcels WHERE id=? FOR UPDATE', [$pid])->fetch();
+        if (!$locked || (int)$locked['driver_id'] !== (int)$_SESSION['user_id'] ||
+            in_array($locked['status'], ['Delivered','Cancelled','Return Pending','Returned'], true)) {
+            throw new InvalidArgumentException('This parcel cannot be updated.');
+        }
+        if (empty($_FILES['pickup_photo']['tmp_name'])) throw new InvalidArgumentException('Photo is required when marking Picked Up.');
+        $ext = strtolower(pathinfo($_FILES['pickup_photo']['name'], PATHINFO_EXTENSION) ?: 'jpg');
+        if (!in_array($ext, ['jpg','jpeg','png','webp','heic'])) $ext = 'jpg';
+        $path = 'resources/transit/pickup_' . $pid . '_' . bin2hex(random_bytes(12)) . '.' . $ext;
+        $photo_storage = new ProofStorage();
+        $pickup_photo_rel = $photo_storage->saveUpload($_FILES['pickup_photo'], $path);
+        DeliveryCapture::update($pickup_db, 'parcels', ['id'=>$pid], ['status'=>$status]);
+        foreach (["Driver updated: {$status}.", "[IMG]{$pickup_photo_rel}|Proof of pickup"] as $note) {
+            DeliveryCapture::insert($pickup_db, 'parcel_history', ['parcel_id'=>$pid, 'status'=>$status,
+                'notes'=>$note, 'updated_by'=>$_SESSION['user_id']]);
+        }
+        $pickup_db->commit();
+    } catch (Throwable $e) {
+        $pickup_db->roll_back();
+        if ($pickup_photo_rel && $photo_storage) {
+            try { $photo_storage->discard($pickup_photo_rel); }
+            catch (Throwable $cleanup) { error_log('Pickup rollback cleanup failed: '.get_class($cleanup)); }
+        }
+        if (!($e instanceof InvalidArgumentException)) error_log('Pickup proof save failed: '.get_class($e));
+        set_flash('error', $e instanceof InvalidArgumentException ? $e->getMessage() : 'Pickup photo could not be saved. Status was not changed. Please retry.');
         header('Location: ' . url('driver/parcel/'.$pid)); exit;
     }
-    $dir = APP_ROOT . '/resources/transit';
-    if (!is_dir($dir)) @mkdir($dir, 0775, true);
-    $ext = strtolower(pathinfo($_FILES['pickup_photo']['name'], PATHINFO_EXTENSION) ?: 'jpg');
-    if (!in_array($ext, ['jpg','jpeg','png','webp','heic'])) $ext = 'jpg';
-    $fname = 'pickup_' . $pid . '_' . time() . '_' . bin2hex(random_bytes(3)) . '.' . $ext;
-    if (!move_uploaded_file($_FILES['pickup_photo']['tmp_name'], $dir . '/' . $fname)) {
-        set_flash('error','Pickup photo upload failed. Try again.');
-        header('Location: ' . url('driver/parcel/'.$pid)); exit;
-    }
-    $pickup_photo_rel = 'resources/transit/' . $fname;
-}
-
-db()->table('parcels')->where('id', $pid)->update(['status' => $status]);
-
-$history_notes = "Driver updated: {$status}.";
-if ($pickup_photo_rel) {
-    // Store the status-change note first, then a separate IMG row so both render correctly.
-    db()->table('parcel_history')->insert([
-        'parcel_id'  => $pid,
-        'status'     => $status,
-        'notes'      => $history_notes,
-        'updated_by' => $_SESSION['user_id'],
-    ]);
-    db()->table('parcel_history')->insert([
-        'parcel_id'  => $pid,
-        'status'     => $status,
-        'notes'      => "[IMG]{$pickup_photo_rel}|Proof of pickup",
-        'updated_by' => $_SESSION['user_id'],
-    ]);
 } else {
+    db()->table('parcels')->where('id', $pid)->update(['status' => $status]);
     db()->table('parcel_history')->insert([
-        'parcel_id'  => $pid,
-        'status'     => $status,
-        'notes'      => $history_notes,
-        'updated_by' => $_SESSION['user_id'],
+        'parcel_id'=>$pid, 'status'=>$status,
+        'notes'=>"Driver updated: {$status}.", 'updated_by'=>$_SESSION['user_id'],
     ]);
 }
 

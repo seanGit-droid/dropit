@@ -29,6 +29,9 @@ $router->post('/signup/customer', function(){ $role='customer'; include APP_ROOT
 $router->post('/signup/otp/send',   'app/views/actions/otp_send');
 $router->post('/signup/otp/verify', 'app/views/actions/otp_verify');
 
+// Remote proof originals retain their existing photo URLs and require parcel access.
+$router->get('/resources/{kind}/{filename}', 'app/views/actions/proof_photo', ['auth']);
+
 // ============ Customer ============
 $router->group([
     'prefix'     => 'customer',

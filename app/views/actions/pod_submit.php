@@ -4,8 +4,9 @@ $pid = (int)($id ?? 0);
 $uid = (int)$_SESSION['user_id'];
 
 require_once APP_ROOT . '/scheme/DeliveryCapture.php';
+require_once APP_ROOT . '/scheme/ProofStorage.php';
 $json = str_contains($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json');
-$db = db(); $saved_file = null;
+$db = db(); $saved_file = null; $photo_storage = null;
 $db->transaction();
 try {
 if (!(new Router())->is_csrf_valid()) throw new InvalidArgumentException('Your form expired. Reload and try again.');
@@ -16,11 +17,9 @@ if (in_array($p['status'], ['Delivered','Cancelled','Return Pending','Returned']
 $proof = DeliveryCapture::validate($_POST, $_FILES['photo'] ?? []);
 $signature = $proof['signature'];
 $receiver = $proof['receiver'];
-$pod_dir = APP_ROOT . '/resources/pod';
-if (!is_dir($pod_dir) && !mkdir($pod_dir,0775,true) && !is_dir($pod_dir)) throw new RuntimeException('Photo storage unavailable.');
+$photo_storage = new ProofStorage();
 $photo_rel = 'resources/pod/pod_' . $pid . '_' . bin2hex(random_bytes(12)) . '.' . $proof['extension'];
-$saved_file = APP_ROOT . '/' . $photo_rel;
-if (!move_uploaded_file($_FILES['photo']['tmp_name'], $saved_file)) throw new RuntimeException('Photo could not be saved.');
+$saved_file = $photo_storage->saveUpload($_FILES['photo'], $photo_rel);
 
 DeliveryCapture::update($db, 'parcels', ['id'=>$pid], [
     'pod_photo'     => $photo_rel,
@@ -91,7 +90,10 @@ if ($p['payment_method'] === 'cod' && !empty($_POST['cod_collected'])) {
 $db->commit();
 } catch (Throwable $e) {
     $db->roll_back();
-    if ($saved_file && is_file($saved_file)) unlink($saved_file);
+    if ($saved_file && $photo_storage) {
+        try { $photo_storage->discard($saved_file); }
+        catch (Throwable $cleanup) { error_log('Proof rollback cleanup failed: '.get_class($cleanup)); }
+    }
     $message = $e instanceof InvalidArgumentException ? $e->getMessage() : 'Photo and location could not be saved. Delivery was not completed. Please retry.';
     if (!($e instanceof InvalidArgumentException)) error_log('Delivery capture: '.$e->getMessage());
     if ($json) json_response(['ok'=>false,'error'=>$message],422);
