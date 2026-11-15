@@ -477,8 +477,9 @@ body.theme-light select.driver-select option {
 
     if (!_adjusting) {
       // Normal dispatch — just submit the original form
+      const form = _pendingForm;
       hideModal();
-      _pendingForm.submit();
+      form.submit();
       return;
     }
 
