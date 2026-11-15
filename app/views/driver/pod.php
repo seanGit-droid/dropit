@@ -34,7 +34,7 @@ include __DIR__ . '/../partials/live.php';
       <?php if (isset($p['pod_latitude'], $p['pod_longitude'])): ?>
         <div data-pod-location data-geocoder-url="https://photon.komoot.io/reverse" data-latitude="<?= esc($p['pod_latitude']) ?>" data-longitude="<?= esc($p['pod_longitude']) ?>" data-accuracy="<?= esc($p['pod_accuracy']) ?>" data-captured-at="<?= esc($p['pod_captured_at']) ?> UTC">
           <p data-location-address class="text-sm" aria-live="polite">Location: Looking up address…</p>
-          <p data-location-coordinates class="text-sm font-mono overflow-x-auto whitespace-pre" aria-label="Photo GPS coordinates">Latitude: <?= esc($p['pod_latitude']) ?>   Longitude: <?= esc($p['pod_longitude']) ?></p>
+          <p data-location-coordinates class="text-sm font-mono whitespace-pre-wrap break-words" aria-label="Photo GPS coordinates">Latitude: <?= esc($p['pod_latitude']) ?>   Longitude: <?= esc($p['pod_longitude']) ?></p>
           <p data-location-meta class="text-xs text-brand-mist"></p>
           <p class="text-xs text-brand-mist">Address: <a href="https://photon.komoot.io/" target="_blank" rel="noopener noreferrer">Photon</a> · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a></p>
         </div>
@@ -66,7 +66,7 @@ include __DIR__ . '/../partials/live.php';
       </div>
       <div id="podLocationDisplay" data-pod-location data-geocoder-url="https://photon.komoot.io/reverse" hidden>
         <p data-location-address class="text-sm" aria-live="polite"></p>
-        <p id="podCoordinates" data-location-coordinates class="text-sm font-mono overflow-x-auto whitespace-pre" aria-label="Photo GPS coordinates" aria-live="polite"></p>
+        <p id="podCoordinates" data-location-coordinates class="text-sm font-mono whitespace-pre-wrap break-words" aria-label="Photo GPS coordinates" aria-live="polite"></p>
         <p data-location-meta class="text-xs text-brand-mist"></p>
         <p class="text-xs text-brand-mist">Address: <a href="https://photon.komoot.io/" target="_blank" rel="noopener noreferrer">Photon</a> · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a></p>
       </div>
