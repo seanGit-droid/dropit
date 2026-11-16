@@ -9,8 +9,12 @@ RUN a2enmod mpm_prefork rewrite
 
 WORKDIR /var/www/html
 COPY . /var/www/html/
+COPY docker-start.sh /usr/local/bin/dropit-start
+RUN chmod +x /usr/local/bin/dropit-start
 
 RUN chown -R www-data:www-data /var/www/html
+
+CMD ["/usr/local/bin/dropit-start"]
 
 ENV APP_ENV=production
 
