@@ -11,6 +11,9 @@ class Database {
      * @var object
      */
     private static $instance = NULL;
+
+    // Request-scoped PDO transport; query-builder state remains per object.
+    private static ?PDO $connection = null;
     
     /**
      * Database Instance
@@ -159,6 +162,11 @@ class Database {
     public function __construct()
     {
         $this->dbprefix = DB_PREFIX;
+        if (self::$connection !== null) {
+            $this->db = self::$connection;
+            $this->driver = $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            return;
+        }
         $driver = strtolower(DB_DRIVER);
         $charset = DB_CHARSET;
         $host = DB_HOST;
@@ -213,6 +221,7 @@ class Database {
             try {
                 $this->db = new PDO($dsn, $username, $password, $options);
                 $this->driver = $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
+                self::$connection = $this->db;
                 $lastException = null;
                 break;
             } catch (Exception $e) {

@@ -45,7 +45,10 @@ window.DropIT = (function(){
   }
 
   // Partial refresh: fetch same URL, swap elements by id.
+  let refreshing = false;
   async function refresh(ids){
+    if (refreshing || document.hidden) return;
+    refreshing = true;
     try {
       const r = await fetch(window.location.href, {headers:{'X-Partial':'1'}, credentials:'same-origin'});
       if (!r.ok) return;
@@ -57,6 +60,7 @@ window.DropIT = (function(){
         if (next && curr) curr.innerHTML = next.innerHTML;
       }
     } catch(e){}
+    finally { refreshing = false; }
   }
   function autoRefresh(ids, intervalMs){
     setInterval(() => refresh(ids), intervalMs || 10000);
@@ -73,7 +77,10 @@ window.DropIT = (function(){
       if (count > 0) el.classList.remove('hidden'); else el.classList.add('hidden');
     });
   }
+  let notificationsInFlight = false;
   async function pollNotifications(){
+    if (notificationsInFlight || document.hidden) return;
+    notificationsInFlight = true;
     try {
       const r = await fetch('<?= url('api/notifications/unread') ?>', {credentials:'same-origin'});
       const d = await r.json();
@@ -95,6 +102,7 @@ window.DropIT = (function(){
         localStorage.setItem(NOTIF_STORAGE, String(lastNotifId));
       }
     } catch(e){}
+    finally { notificationsInFlight = false; }
   }
   function paintMsgBadge(count){
     document.querySelectorAll('[data-msg-badge]').forEach(el => {
@@ -102,12 +110,16 @@ window.DropIT = (function(){
       if (count > 0) el.classList.remove('hidden'); else el.classList.add('hidden');
     });
   }
+  let messagesInFlight = false;
   async function pollMessages(){
+    if (messagesInFlight || document.hidden) return;
+    messagesInFlight = true;
     try {
       const r = await fetch('<?= url('api/messages/unread') ?>', {credentials:'same-origin'});
       const d = await r.json();
       if (d.ok) paintMsgBadge(d.count);
     } catch(e){}
+    finally { messagesInFlight = false; }
   }
   function startNotifPoll(){
     if (notifPollStarted) return;
@@ -165,7 +177,10 @@ window.DropIT = (function(){
     // Inject modal HTML once
     if (!document.getElementById('priceReviewModal')) _injectPriceModal();
     const seen = new Set(JSON.parse(sessionStorage.getItem('dropit_pr_seen') || '[]'));
+    let pricePollInFlight = false;
     async function poll(){
+      if (pricePollInFlight || document.hidden) return;
+      pricePollInFlight = true;
       try {
         const r = await fetch('<?= url('api/customer/price-reviews') ?>', {credentials:'same-origin'});
         const d = await r.json();
@@ -176,6 +191,7 @@ window.DropIT = (function(){
         sessionStorage.setItem('dropit_pr_seen', JSON.stringify([...seen]));
         _showPriceModal(pr);
       } catch(e){}
+      finally { pricePollInFlight = false; }
     }
     poll(); setInterval(poll, 10000);
   }

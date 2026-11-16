@@ -58,14 +58,7 @@ function json_response($data, int $status = 200): never {
 
 //Database connection
 function db() {
-    // Reuse one connection for the lifetime of the request. Creating a new
-    // TLS connection for every query makes Railway-to-Aiven requests slow and
-    // can trigger intermittent connection failures under polling traffic.
-    static $db = null;
-    if ($db === null) {
-        $db = new Database();
-    }
-    return $db;
+    return new Database();
 }
 
 //Read a key/value setting (cached per request)
