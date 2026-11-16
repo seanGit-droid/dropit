@@ -15,6 +15,12 @@ header("X-XSS-Protection: 1; mode=block");
 header("Referrer-Policy: strict-origin-when-cross-origin");
 header_remove('X-Powered-By');
 
+// Identify the running Railway release without exposing configuration values.
+$release = getenv('RAILWAY_GIT_COMMIT_SHA') ?: '';
+if (preg_match('/^[a-f0-9]{40}$/i', $release)) {
+    header('X-DropIT-Revision: ' . substr($release, 0, 12));
+}
+
 //App configurations
 require_once 'config.php';
 

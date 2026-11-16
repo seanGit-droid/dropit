@@ -1,4 +1,5 @@
 <?php
+if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 // Exercise independent builders and atomic writes on a real in-memory PDO.
 define('APP_ROOT', dirname(__DIR__));
 putenv('DB_DRIVER=sqlite');
