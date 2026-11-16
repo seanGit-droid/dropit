@@ -203,11 +203,27 @@ class Database {
                 $options[PHP_VERSION_ID >= 80400 ? Pdo\Mysql::ATTR_SSL_VERIFY_SERVER_CERT : PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT] = true;
             }
         }
-        try {
-            $this->db = new PDO($dsn, $username, $password, $options);
-             $this->driver = $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
-        } catch (Exception $e) {
-            throw $e;
+        // Aiven can briefly reset an external TLS connection while the
+        // Railway container is serving many short requests. Retry only the
+        // initial connection so transient network failures do not become a
+        // user-facing 503, while still surfacing a real outage promptly.
+        $attempts = $driver === 'mysql' ? 3 : 1;
+        $lastException = null;
+        for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+            try {
+                $this->db = new PDO($dsn, $username, $password, $options);
+                $this->driver = $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
+                $lastException = null;
+                break;
+            } catch (Exception $e) {
+                $lastException = $e;
+                if ($attempt < $attempts) {
+                    usleep(150000 * $attempt);
+                }
+            }
+        }
+        if ($lastException !== null) {
+            throw $lastException;
         }
     }
 
